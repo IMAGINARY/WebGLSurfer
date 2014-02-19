@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<title>three.js canvas - particles - waves</title>
+		<meta charset="utf-8">
+         <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+            <style>
+               body {
+                  background-color: #ffffff;
+                  margin: 0px;
+                  overflow: hidden;
+               }
+            
+            a {
+               color:#0078ff;
+            }
+            </style>
+            </head>
+          <div id="canvas"> </div>
+	<body>
+		
+      <script src="three.js"></script>
+      <script src="stats.min.js"></script>
+      
+      <script src ="aShader.js" type="x-shader/x-fragment" id="fragmentshader">
+         
+         uniform vec3      iResolution;           // viewport resolution (in pixels)
+         uniform float     iGlobalTime;           // shader playback time (in seconds)
+         uniform vec3      iChannelResolution[4]; // channel resolution (in pixels)
+         uniform samplerCube iChannel0;
+         uniform sampler2D iChannel1;
+         uniform samplerCube iChannel2;
+         uniform vec4      iMouse;                // mouse pixel coords. xy: current (if MLB down), zw: click
+         uniform vec4      iDate;                 // (year, month, day, time in seconds)
+         
+         
+         const vec3 lightPos = vec3(0.0,800.0,800.0);
+         const vec3 diffuseColor = vec3(0.2, 0.9, 0.9);
+         const vec3 specColor = vec3(0.8, 0.8, 0.8);
+         
+         
+         const float precis = 0.01;
+         
+            //==================================================================================
+            // some dual real numbers functions, for f : R3 -> R1
+            
+            struct dualR3
+            {
+               float x, y, z;
+               float dx, dy, dz;
+            };
+      
+      vec4 dSet( float a ) { return vec4( a, 0.0, 0.0, 0.0 ); }
+      vec4 getX( dualR3 n ) {	return vec4(n.x, n.dx, 0.0, 0.0 ); }
+      vec4 getY( dualR3 n ) {	return vec4(n.y, 0.0, n.dy, 0.0 ); }
+      vec4 getZ( dualR3 n ) {	return vec4(n.z, 0.0, 0.0, n.dz ); }
+      
+      vec4 dSqrX( dualR3 a ) { return vec4( a.x*a.x, 2.0*a.x*a.dx, 0.0, 0.0 ); }
+      vec4 dSqrY( dualR3 a ) { return vec4( a.y*a.y, 0.0, 2.0*a.y*a.dy, 0.0 ); }
+      vec4 dSqrZ( dualR3 a ) { return vec4( a.z*a.z, 0.0, 0.0, 2.0*a.z*a.dz ); }
+      
+      vec4 dMul( vec4 a, vec4 b ) { return vec4( a.x*b.x, a.y*b.x + a.x*b.y, a.z*b.x + a.x*b.z, a.w*b.x + a.x*b.w );
+         
+      }
+      
+      
+      
+         //===========================================================================================
+         // dual-numbers way: compute gradients (and distance estimation) analytically
+         //===========================================================================================
+         
+         vec4 func( dualR3 p )
+         {
+               // f(x,y,z) = z² - (y²-3x²)·(3y²-x²)·(1-x)
+               return dSqrZ(p) - dMul( dMul( dSqrY(p) - 3.0*dSqrX(p), 3.0*dSqrY(p) - dSqrX(p)), dSet(1.0) - getX(p) );
+         }
+      
+      vec3 grad( in vec3 p )
+      {
+         return func( dualR3(p.x,p.y,p.z,1.0,1.0,1.0) ).yzw;
+      }
+      
+      float dist( vec3 p )
+      {
+         vec4 f = func( dualR3(p.x,p.y,p.z,1.0,1.0,1.0) );
+         return f.x / length(f.yzw);
+      }
+      
+      float map( vec3 p )
+      {
+         return func( dualR3(p.x,p.y,p.z,0.0,0.0,0.0) ).x;
+      }
+      
+      
+         //==================================================================================
+         
+         
+         vec2 intersect( in vec3 ro, in vec3 rd )
+         {
+            float mind = precis*2.0;
+            float maxd = 50.0;
+            
+            
+            {
+               float b = dot(ro,rd);
+               float c = dot(ro,ro) - 1.5*1.5;
+               float h = b*b - c;
+               if( h<0.0 ) return vec2(-1.0,0.0);
+               h = sqrt(h);
+               mind = max( mind, -b - h );
+               maxd = min( maxd, -b + h );
+            }
+            
+            float h = 1.0;
+            float t = mind;
+            for( int i=0; i<500; i++ )
+            {
+               if( abs(h)<precis||t>maxd ) continue;
+               h = dist( ro+rd*t );
+               t += 0.01;
+            }
+            
+            if( t>maxd ) t=-1.0;
+            return vec2(t,sign(h));
+         }
+      
+      vec3 calcNormal( in vec3 p )
+      {
+         return normalize( grad(p) );
+      }
+      
+      void main(void)
+      {
+         vec2 q = gl_FragCoord.xy / iResolution.xy;
+         vec2 m = vec2(0.5);
+         
+            // animation
+            float time = iGlobalTime;
+            
+            vec3 tot = vec3(0.0);
+            
+            vec2 p = -1.0 + 2.0 * (gl_FragCoord.xy )/iResolution.xy;
+               //   p.x *= iResolution.x/iResolution.y;
+               
+                  // camera
+                  float an = 0.3*time - 6.2*m.x;
+                  float cr = 0.15*sin(0.2*time);
+                  vec3 ro = 2.5*vec3(sin(an),0.0,cos(an));
+                  vec3 ta = vec3( 0.0, 0.0, 0.0 );
+                  vec3 ww = normalize( ta - ro );
+                  vec3 uu = normalize( cross(ww,vec3(sin(cr),cos(cr),0.0) ) );
+                  vec3 vv = normalize( cross(uu,ww));
+                  vec3 rd = normalize( p.x*uu + p.y*vv + 1.5*ww );
+                  
+                     // raymarch
+                     vec2 t = intersect(ro,rd);
+                     
+                        // shade
+                        vec3 col = vec3(0.0);
+                        if( t.x>0.0 )
+                        {
+                              // geometry
+                              vec3 pos = ro + t.x*rd;
+                              vec3 normal = calcNormal(pos);
+                              
+                                 //shading
+                                 vec3 lightDir = normalize(lightPos - pos);
+                                 
+                                 float lambertian = max(dot(lightDir,normal), 0.0);
+                                 float specular = 0.0;
+                                 
+                                 if(lambertian > 0.0) {
+                                    
+                                    vec3 reflectDir = reflect(-lightDir, normal);
+                                    vec3 viewDir = normalize(-pos);
+                                    
+                                    float specAngle = max(dot(reflectDir, viewDir), 0.0);
+                                    
+                                       // the exponent controls the shininess (try mode 2)
+                                       //if(mode == 2)  specular = pow(specAngle, 16.0);
+                                       
+                                          // according to the rendering equation we would need to multiply
+                                          // with the the "lambertian", but this has little visual effect
+                                           specular *= lambertian;
+                                          //specular = pow(specAngle, 10.0);
+                                             // switch to mode 4 to turn off the specular component
+                                             
+                                             
+                                 }
+                                 
+                                 col = vec3( lambertian*diffuseColor +
+                                            specular*specColor);
+                        }
+                        
+                        else
+                        {
+                              // background
+                              col =vec3(1.0,1.0,1.0);
+                        }
+                        
+                        
+                        
+                        gl_FragColor = vec4( col, 1.0 );
+      }
+
+         
+         
+      </script>
+      
+      
+      <script type="x-shader/x-vertex" id="vertexshader">
+         void main() {
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0);
+			}
+      </script>
+      
+      
+		<script>
+       
+         var container;
+			var camera, scene, renderer;
+			
+         
+         var uniforms;
+         var attributes;
+         var shaderMaterials = new Array();
+         var cube;
+         
+         var geometry;
+         var stats;
+         
+
+         
+         
+			init();
+			animate();
+         
+			function init() {
+            
+               //init scene and camera
+            container = document.getElementById( 'canvas' );
+               
+            
+               
+            camera = new THREE.PerspectiveCamera( 5, window.innerWidth / window.innerHeight, 10, 8000 );
+            camera.position.z =  200;
+
+            camera.lookAt(new THREE.Vector3(0,0,0));
+               
+            scene = new THREE.Scene();
+            scene.fog = new THREE.Fog( 0x555555, 2000, 3500 );
+      
+            uniforms = {
+                    iResolution: {	type: 'v3', value: new THREE.Vector3( 400.0, 400.0, 1.0 )  },
+                    iGlobalTime: {	type: 'f', value: 1.0 },
+                    iChannelResolution: {	type: 'v3', value: new THREE.Vector3( 100.0, 100.0, 100.0 )   },
+                    iMouse: {	type: 'v3', value: new THREE.Vector3( 0.0, 1.0, 2.0 )},
+                    iDate:  {	type: 'v4', value: new THREE.Vector4( 0.0, 1.0, 2.0, 2.0 )  },
+                    iChannel0: {type: 't', value: THREE.ImageUtils.loadTexture( "aTexture.png" ) },
+                    iChannel1: {type: 't', value: THREE.ImageUtils.loadTexture( "aTexture.png" ) },
+                    iChannel2: {type: 't', value: THREE.ImageUtils.loadTexture( "aTexture.png" ) }
+                    };
+
+
+            var material = new THREE.ShaderMaterial( {
+                                                    uniforms: uniforms,
+                                                    vertexShader:   document.getElementById( 'vertexshader' ).textContent,
+                                                    fragmentShader: document.getElementById( 'fragmentshader' ).textContent
+            });
+      
+      
+      
+      
+            geometry = new THREE.PlaneGeometry(35, 35);
+            cube = new THREE.Mesh(geometry, material);
+            scene.add(cube);
+          
+            renderer = new THREE.WebGLRenderer( { antialias: true, alpha: false } );
+            renderer.setClearColor( scene.fog.color, 1 );
+            renderer.setSize( 800, 600);
+         
+            container.appendChild( renderer.domElement );
+            stats = new Stats();
+				stats.domElement.style.position = 'absolute';
+				stats.domElement.style.top = '0px';
+				container.appendChild( stats.domElement );
+       
+         
+      }
+      
+      function onWindowResize() {
+         
+         windowHalfX = window.innerWidth / 2;
+         windowHalfY = window.innerHeight / 2;
+         
+         camera.aspect = window.innerWidth / window.innerHeight;
+         camera.updateProjectionMatrix();
+         
+         renderer.setSize( window.innerWidth, window.innerHeight );
+         
+      }
+      
+			//
+         
+      function animate() {
+         requestAnimationFrame( animate );
+      uniforms.iGlobalTime.value += 0.03;
+            uniforms.iGlobalTime.needsUpdate = true;
+         renderer.render( scene, camera );
+         stats.update();
+
+      }
+      
+         </script>
+      
+	</body>
+</html>
