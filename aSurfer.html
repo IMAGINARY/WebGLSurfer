@@ -34,9 +34,9 @@
          uniform vec4      iDate;                 // (year, month, day, time in seconds)
          
          
-         const vec3 lightPos = vec3(0.0,800.0,800.0);
-         const vec3 diffuseColor = vec3(0.2, 0.9, 0.9);
-         const vec3 specColor = vec3(0.8, 0.8, 0.8);
+         const vec3 lightPos = vec3(5.0,5.0,7.0);
+         const vec3 diffuseColor = vec3(0.4, 1.0, 1.0);
+         const vec3 specColor = vec3(0.6, 1.0, 1.0);
          
          
          const float precis = 0.001;
@@ -72,7 +72,9 @@
          vec4 func( dualR3 p )
          {
                // f(x,y,z) = z² - (y²-3x²)·(3y²-x²)·(1-x)
-               return dSqrZ(p) - dMul( dMul( dSqrY(p) - 3.0*dSqrX(p), 3.0*dSqrY(p) - dSqrX(p)), dSet(1.0) - getX(p) );
+                              return dSqrZ(p) - dMul( dMul( dSqrY(p) - 3.0*dSqrX(p), 3.0*dSqrY(p) - dSqrX(p)), dSet(1.0) - getX(p) );
+                                 //               return dSqrX(p) + dSqrY(p) + dSqrZ(p) + 2.0 * dMul(dMul(getX(p), getY(p)), getZ(p)) - dSet(1.0);
+
          }
       
       vec3 grad( in vec3 p )
@@ -83,7 +85,7 @@
       float dist( vec3 p )
       {
          vec4 f = func( dualR3(p.x,p.y,p.z,1.0,1.0,1.0) );
-         return f.x / length(f.yzw);
+         return abs(f.x) / length(f.yzw);
       }
       
       float map( vec3 p )
@@ -97,30 +99,31 @@
          
          vec2 intersect( in vec3 ro, in vec3 rd )
          {
-            float mind = precis*1.0;
-            float maxd = 40.0;
+            float mind = 0.001;
+            float maxd = 20.0;
             
             
             {
                float b = dot(ro,rd);
-               float c = dot(ro,ro) - 1.5*1.5;
+               float c =4.;
                float h = b*b - c;
                if( h<0.0 ) return vec2(-1.0,0.0);
                h = sqrt(h);
-               mind = max( mind, -b - h );
-               maxd = min( maxd, -b + h );
+                  mind = max( mind, -b - h );
+                  maxd = min( maxd, -b + h );
             }
             
             float h = 1.0;
             float t = mind;
-            for( int i=0; i<100; i++ )
+            for( int i=0; i<300; i++ )
             {
-               if( abs(h)<precis||t>maxd ) continue;
+               if( h<precis||t>maxd ) continue;
                h = dist( ro+rd*t );
-               t += min(0.1, h);
+               t += min(0.01,h);
             }
             
             if( t>maxd ) t=-1.0;
+            
             return vec2(t,sign(h));
          }
       
@@ -139,18 +142,16 @@
             
             vec3 tot = vec3(0.0);
             
-            vec2 p = -1.0 + 2.0 * (gl_FragCoord.xy )/iResolution.xy;
+            vec2 p = -vec2(0.6)+ (gl_FragCoord.xy )/iResolution.xy;
                //   p.x *= iResolution.x/iResolution.y;
                
                   // camera
-                  float an = 0.3*time - 6.2*m.x;
-                  float cr = 0.15*sin(0.2*time);
-                  vec3 ro = 2.5*vec3(sin(an),0.0,cos(an));
+                  vec3 ro = 2.5*vec3(sin(time),0.0,cos(time));
                   vec3 ta = vec3( 0.0, 0.0, 0.0 );
                   vec3 ww = normalize( ta - ro );
-                  vec3 uu = normalize( cross(ww,vec3(sin(cr),cos(cr),0.0) ) );
+                  vec3 uu = normalize( cross(ww,vec3(0.0,1.,0.0) ) );
                   vec3 vv = normalize( cross(uu,ww));
-                  vec3 rd = normalize( p.x*uu + p.y*vv + 1.5*ww );
+                  vec3 rd = normalize( p.x*uu + p.y*vv + 0.5*ww );
                   
                      // raymarch
                      vec2 t = intersect(ro,rd);
@@ -181,8 +182,8 @@
                                        
                                           // according to the rendering equation we would need to multiply
                                           // with the the "lambertian", but this has little visual effect
-                                           specular *= lambertian;
-                                          //specular = pow(specAngle, 10.0);
+                                          // specular *= lambertian;
+                                          specular = pow(specAngle, 10.0);
                                              // switch to mode 4 to turn off the specular component
                                              
                                              
@@ -251,7 +252,7 @@
             scene.fog = new THREE.Fog( 0x555555, 2000, 3500 );
       
             uniforms = {
-                    iResolution: {	type: 'v3', value: new THREE.Vector3( 400.0, 400.0, 1.0 )  },
+                    iResolution: {	type: 'v3', value: new THREE.Vector3( 600.0, 600.0, 1.0 )  },
                     iGlobalTime: {	type: 'f', value: 1.0 },
                     iChannelResolution: {	type: 'v3', value: new THREE.Vector3( 100.0, 100.0, 100.0 )   },
                     iMouse: {	type: 'v3', value: new THREE.Vector3( 0.0, 1.0, 2.0 )},
@@ -271,7 +272,7 @@
       
       
       
-            geometry = new THREE.PlaneGeometry(35, 35);
+            geometry = new THREE.PlaneGeometry(45, 45);
             cube = new THREE.Mesh(geometry, material);
             scene.add(cube);
           
